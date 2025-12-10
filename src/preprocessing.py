@@ -95,7 +95,7 @@ def cargar_datos_mixtos(ruta_excel_train, ruta_csv_train, ruta_excel_test):
 
     # ¡NUEVO SUBMUESTREO AL 30% DE FALSAS!
     # Target: 573 noticias Falsas
-    df_fake_sampled_final = df_all_fake.sample(n=1000, random_state=42)
+    df_fake_sampled_final = df_all_fake.sample(n=1500, random_state=42)
 
 
     # 2c. Unificación Final del Conjunto de Entrenamiento (70% Real / 30% Falsa)

@@ -1,47 +1,65 @@
-import os
-import tensorflow as tf
-from src.preprocessing import cargar_datos_mixtos 
-from src.train_classic import entrenar_modelo_clasico
+import pandas as pd
+import numpy as np
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.svm import LinearSVC
+from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from src.preprocessing import cargar_datos_mixtos, limpiar_texto
 from src.train_transformer import entrenar_modelo_transformer
 from src.evaluation import evaluar_modelo_clasico, evaluar_modelo_transformer
 
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-tf.get_logger().setLevel('ERROR')
-
-
-
 def ejecutar_flujo_completo():
-    """Ejecuta la carga de datos, entrenamiento y evaluación de ambos modelos."""
+    """
+    Ejecuta el flujo completo: carga, preprocesamiento, cálculo de pesos, 
+    entrenamiento de modelos (SVM y BETO) y evaluación.
+    """
     
-    print("--- FASE 1: Preparación de Datos ---")
-    
-    # 1. Carga y Unificación de Datos
+    # 1. Carga y preprocesamiento de datos (incluye balanceo 1:1)
     X_train_raw, X_test_raw, y_train, y_test = cargar_datos_mixtos(
         ruta_excel_train='data/train.xlsx', 
-        ruta_csv_train='data/esp_fake_news.csv', # Nueva ruta CSV para entrenamiento
+        ruta_csv_train='data/esp_fake_news.csv', 
         ruta_excel_test='data/test.xlsx'
     )
-    
-    print(f"Datos de Entrenamiento: {len(X_train_raw)} | Datos de Prueba: {len(X_test_raw)}")
 
-    # 2. Entrenamiento y Evaluación del Modelo Clásico (SVM)
-    # Las funciones de entrenamiento y evaluación NO necesitan cambiarse
-    # ya que ya están diseñadas para recibir los conjuntos separados.
-    print("--- FASE 2: Entrenamiento y Evaluación de Baseline (SVM) ---")
-    modelo_svm = entrenar_modelo_clasico(X_train_raw, y_train)
-    evaluar_modelo_clasico(modelo_svm, X_test_raw, y_test)
+    # 2. CÁLCULO DE PESOS DE CLASE para corregir el sesgo en BERT
+    classes = np.unique(y_train)
+    weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
+    class_weights_dict = dict(zip(classes, weights))
     
-    print("\n" + "="*60 + "\n")
+    print("-" * 50)
+    print(f"Pesos de Clase Calculados (0: Falsa, 1: Real): {class_weights_dict}")
+    print("-" * 50)
 
-    # 3. Entrenamiento y Evaluación del Modelo Transformer (BETO)
-    print("--- FASE 3: Entrenamiento y Evaluación de Transformer (BETO) ---")
-    modelo_bert, X_test_data_bert, y_test_labels_bert = entrenar_modelo_transformer(
-        X_train_raw, X_test_raw, y_train, y_test
+
+    # --- CLASIFICADOR CLÁSICO (LÍNEA BASE) ---
+
+    # 3. Preprocesamiento para SVM (Limpieza de texto y Vectorización)
+    print("\n-> Entrenando Clasificador Clásico (SVM) como baseline...")
+    X_train_clean = X_train_raw.apply(limpiar_texto)
+    X_test_clean = X_test_raw.apply(limpiar_texto)
+    
+    # 4. Definición y Entrenamiento de Pipeline (TF-IDF + SVM)
+    pipeline_svm = Pipeline([
+        ('tfidf', TfidfVectorizer(max_features=5000)),
+        ('clf', LinearSVC(class_weight='balanced', random_state=42, dual=True)) # Balanceado para el SVM
+    ])
+    
+    pipeline_svm.fit(X_train_clean, y_train)
+
+    # 5. Evaluación del Clasificador Clásico
+    evaluar_modelo_clasico(pipeline_svm, X_test_clean, y_test)
+
+
+    # --- MODELO TRANSFORMER (SOLUCIÓN AVANZADA) ---
+
+    # 6. Entrenamiento del Modelo Transformer (Pasa los pesos de clase)
+    model_bert, X_test_data_bert, y_test_labels_bert = entrenar_modelo_transformer(
+        X_train_raw, y_train, X_test_raw, y_test, class_weights_dict 
     )
-    evaluar_modelo_transformer(modelo_bert, X_test_data_bert, y_test_labels_bert)
+
+    # 7. Evaluación del Modelo Transformer (Usa optimización de umbral)
+    evaluar_modelo_transformer(model_bert, X_test_data_bert, y_test_labels_bert)
 
 if __name__ == "__main__":
-    if not os.path.exists('models'):
-        os.makedirs('models')
     ejecutar_flujo_completo()
